@@ -13,13 +13,9 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from pathlib import Path
 
-# Import backend modules
-try:
-    from src.master_router import process_medical_document
-    from src.clinical_rules import calculate_news2_score
-except ImportError:
-    st.error("Backend modules missing! Ensure src/master_router.py and src/clinical_rules.py exist.")
-    st.stop()
+# Bare imports — let the server surface the real error if any dependency is missing
+from src.master_router import process_medical_document
+from src.clinical_rules import calculate_news2_score
 
 # ── 1. General Configuration ───────────────────────────────────────────────
 # The theme is natively enforced via .streamlit/config.toml
