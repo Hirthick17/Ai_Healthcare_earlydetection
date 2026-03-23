@@ -226,7 +226,6 @@ with tab2:
             "The `ecg_file_path` column should contain relative or absolute paths to 12-lead "
             "`.npy` arrays (shape 1000×12) stored on the same server."
         )
-
         csv_file = st.file_uploader(
             "Upload CSV feed", type=["csv", "xlsx"], label_visibility="collapsed"
         )
@@ -250,22 +249,26 @@ with tab2:
                 "Run AI Triage Analysis", type="primary", use_container_width=True
             )
 
-            if run_batch:
-                from src.triage_synthesizer import process_batch_dataset
+            if run_batch or "batch_results" in st.session_state:
+                if run_batch:
+                    from src.triage_synthesizer import process_batch_dataset
+                    st.markdown("**Running AI Triage on Batch...**")
+                    progress_bar = st.progress(0)
 
-                st.markdown("**Running AI Triage on Batch...**")
-                progress_bar = st.progress(0)
+                    def update_progress(fraction):
+                        progress_bar.progress(min(1.0, fraction))
 
-                def update_progress(fraction):
-                    progress_bar.progress(min(1.0, fraction))
+                    with st.spinner("Fusing DenseNet ECG scores with NEWS2 vitals..."):
+                        results_df = process_batch_dataset(df_raw, progress_cb=update_progress)
 
-                with st.spinner("Fusing DenseNet ECG scores with NEWS2 vitals..."):
-                    results_df = process_batch_dataset(df_raw, progress_cb=update_progress)
+                    progress_bar.progress(1.0)
+                    st.session_state["batch_results"] = results_df
+                else:
+                    results_df = st.session_state["batch_results"]
 
-                progress_bar.progress(1.0)
                 st.success(f"✅ Triage complete for {len(results_df)} patients.")
 
-                # ── Batch Summary Metrics ──────────────────────────────────────
+                # ── 1. Summary Metrics Strip ─────────────────────────────────
                 total_patients = len(results_df)
                 critical_count = int((results_df["Final_Triage_Class"] == "Critical").sum())
                 avg_risk = round(results_df["Total_Risk"].mean(), 3)
@@ -273,9 +276,42 @@ with tab2:
                 m1, m2, m3 = st.columns(3)
                 m1.metric("Total Patients", total_patients)
                 m2.metric("🔴 Critical Alerts", critical_count)
-                m3.metric("Avg. Total Risk", avg_risk)
+                m3.metric("Avg. Total Risk", f"{avg_risk:.1%}")
 
-                # ── Styled Triage Table ───────────────────────────────────────
+                # ── 2. Cohort Trend Scatter Plot ─────────────────────────────
+                st.subheader("Cohort Risk Trends")
+                import plotly.express as px
+
+                color_map = {"Critical": "#ef4444", "Stable": "#10b981"}
+                scatter_fig = px.scatter(
+                    results_df,
+                    x="spo2",
+                    y="heart_rate",
+                    color="Final_Triage_Class",
+                    size="Total_Risk",
+                    size_max=30,
+                    hover_data=["patient_id", "temperature", "Total_Risk"],
+                    color_discrete_map=color_map,
+                    labels={
+                        "spo2": "SpO₂ (%)",
+                        "heart_rate": "Heart Rate (BPM)",
+                        "Final_Triage_Class": "Triage",
+                    },
+                    title="Patient Cohort — Risk Distribution",
+                )
+                scatter_fig.update_layout(
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#0f172a"),
+                    legend_title_text="Triage Class",
+                    xaxis=dict(showgrid=True, gridcolor="#e2e8f0"),
+                    yaxis=dict(showgrid=True, gridcolor="#e2e8f0"),
+                )
+                st.plotly_chart(scatter_fig, use_container_width=True, config={"displayModeBar": False})
+
+                # ── 3. Modern Data Grid with ProgressColumns ─────────────────
+                st.subheader("Triage Results")
+
                 def highlight_triage(row):
                     if row.get("Final_Triage_Class") == "Critical":
                         return ["background-color: #fee2e2; color: #991b1b"] * len(row)
@@ -284,5 +320,102 @@ with tab2:
                 st.dataframe(
                     results_df.style.apply(highlight_triage, axis=1),
                     use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "AI_ECG_Risk": st.column_config.ProgressColumn(
+                            "AI ECG Risk", min_value=0.0, max_value=1.0, format="%.0f%%"
+                        ),
+                        "NEWS2_Risk": st.column_config.ProgressColumn(
+                            "NEWS2 Vitals Risk", min_value=0.0, max_value=1.0, format="%.0f%%"
+                        ),
+                        "Total_Risk": st.column_config.ProgressColumn(
+                            "Total Risk Score", min_value=0.0, max_value=1.0, format="%.0f%%"
+                        ),
+                        "Final_Triage_Class": st.column_config.TextColumn("Triage Class"),
+                    },
                 )
 
+                # ── 4. Patient Deep Dive (XAI) ────────────────────────────────
+                st.divider()
+                st.subheader("Patient XAI & Clinical Reasoning")
+
+                selected_pid = st.selectbox(
+                    "Select Patient ID for Detailed Analysis",
+                    options=results_df["patient_id"].tolist(),
+                )
+
+                patient = results_df[results_df["patient_id"] == selected_pid].iloc[0]
+
+                ecg_contribution  = round(float(patient["AI_ECG_Risk"])  * 0.65, 4)
+                vitals_contribution = round(float(patient["NEWS2_Risk"]) * 0.35, 4)
+
+                # XAI Contribution Horizontal Bar
+                xai_fig = px.bar(
+                    x=[ecg_contribution, vitals_contribution],
+                    y=["ECG AI (W=0.65)", "Vitals NEWS2 (W=0.35)"],
+                    orientation="h",
+                    color=["ECG AI (W=0.65)", "Vitals NEWS2 (W=0.35)"],
+                    color_discrete_map={
+                        "ECG AI (W=0.65)": "#4f46e5",
+                        "Vitals NEWS2 (W=0.35)": "#0ea5e9",
+                    },
+                    labels={"x": "Weighted Risk Contribution", "y": ""},
+                    title=f"Risk Contribution Breakdown — {selected_pid}",
+                    text_auto=".3f",
+                )
+                xai_fig.update_layout(
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#0f172a"),
+                    showlegend=False,
+                    xaxis=dict(range=[0, 1], showgrid=True, gridcolor="#e2e8f0"),
+                    shapes=[
+                        dict(
+                            type="line", x0=0.50, x1=0.50, y0=-0.5, y1=1.5,
+                            line=dict(color="#ef4444", width=2, dash="dot"),
+                        )
+                    ],
+                    annotations=[
+                        dict(x=0.50, y=1.6, text="Critical Threshold (0.50)",
+                             showarrow=False, font=dict(color="#ef4444", size=11))
+                    ],
+                )
+                st.plotly_chart(xai_fig, use_container_width=True, config={"displayModeBar": False})
+
+                # ── 5. Dynamic Clinical Reasoning Engine ─────────────────────
+                triage_class = patient["Final_Triage_Class"]
+                ecg_risk_raw = float(patient["AI_ECG_Risk"])
+                news2_risk_raw = float(patient["NEWS2_Risk"])
+                spo2_val = patient.get("spo2", "--")
+                hr_val = patient.get("heart_rate", "--")
+
+                if triage_class == "Critical" and ecg_risk_raw > 0.6:
+                    reasoning = (
+                        f"⚠️ **ECG-Driven Critical Alert:** The AI model heavily weighted the "
+                        f"anomalous ECG waveform (ECG Score: {ecg_risk_raw:.1%}), triggering a "
+                        f"critical alert despite the secondary vitals. "
+                        f"Immediate cardiology review of the ECG trace is recommended."
+                    )
+                elif triage_class == "Critical" and news2_risk_raw > ecg_risk_raw:
+                    reasoning = (
+                        f"⚠️ **Vitals-Driven Critical Alert:** While the ECG did not show severe "
+                        f"morphological anomalies (ECG Score: {ecg_risk_raw:.1%}), the patient's "
+                        f"deteriorating vitals — specifically SpO₂ of **{spo2_val}%** and HR of "
+                        f"**{hr_val} BPM** — drove the risk score above the critical threshold. "
+                        f"Clinical monitoring and a nursing assessment are strongly indicated."
+                    )
+                elif triage_class == "Critical":
+                    reasoning = (
+                        f"⚠️ **Fused Critical Alert:** Both the ECG AI engine (Score: {ecg_risk_raw:.1%}) "
+                        f"and the NEWS2 vitals score (Score: {news2_risk_raw:.1%}) contributed to breach "
+                        f"the critical threshold. This patient requires urgent multi-disciplinary review."
+                    )
+                else:
+                    reasoning = (
+                        f"✅ **Low Risk Profile:** Both the neural network analysis of the ECG "
+                        f"(Score: {ecg_risk_raw:.1%}) and the clinical NEWS2 vitals assessment "
+                        f"(Score: {news2_risk_raw:.1%}) indicate a stable, low-risk profile. "
+                        f"Routine monitoring is sufficient at this time."
+                    )
+
+                st.info(reasoning)
