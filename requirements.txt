@@ -1,0 +1,10 @@
+streamlit==1.32.0
+torch==2.1.0
+torchvision
+numpy<2.0
+opencv-python-headless
+pandas
+pytesseract
+PyMuPDF
+captum
+plotly

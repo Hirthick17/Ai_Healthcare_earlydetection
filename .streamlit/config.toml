@@ -1,0 +1,6 @@
+[theme]
+primaryColor = "#4f46e5"      # Deep Indigo for primary actions
+backgroundColor = "#f8fafc"    # Ultra-light slate/gray for the app background
+secondaryBackgroundColor = "#ffffff" # Pure white for sidebar/cards
+textColor = "#0f172a"          # Very dark slate for high contrast readability
+font = "sans serif"

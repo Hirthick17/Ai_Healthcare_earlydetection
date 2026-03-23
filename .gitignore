@@ -1,0 +1,42 @@
+# Caches and Diagnostics
+__pycache__/
+.ipynb_checkpoints/
+catboost_info/
+temp/
+signal_extractor_debug/
+plots/
+__MACOSX/
+.DS_Store
+
+# Heavy Datasets and Images
+dataset/
+data/
+research_papers/
+*.npy
+*.png
+*.jpg
+*.jpeg
+*.html
+*.json
+*.csv
+*.zip
+*.crdownload
+
+# Research Documents
+*.pptx
+*.docx
+~$*.pptx
+~$*.docx
+*.pdf
+
+# Environment
+.env
+venv/
+env/
+myenv/
+
+# Obsolete / Sandbox Code
+generate_test_ecg.py
+train_ecg_model.py
+predict_risk.py
+Feature_engineering/
