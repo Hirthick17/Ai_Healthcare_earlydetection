@@ -1,12 +1,40 @@
---extra-index-url https://download.pytorch.org/whl/cpu
+# Core Framework
 streamlit==1.32.0
-torch==2.1.0
-torchvision
+
+# Deep Learning - Use CPU-only torch to avoid heavy GPU packages on cloud
+torch==2.1.0+cpu
+torchvision==0.16.0+cpu
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# Numerical & Signal Processing
 numpy<2.0
 scipy
+PyWavelets
+
+# Computer Vision
 opencv-python-headless
-pandas
+
+# OCR
 pytesseract
+
+# PDF Processing
 PyMuPDF
-captum
+
+# Tabular Data
+pandas
+openpyxl
+
+# Visualization
 plotly
+matplotlib
+
+# Scikit-learn ecosystem
+scikit-learn
+imbalanced-learn
+
+# Gradient Boosting
+xgboost
+lightgbm
+
+# XAI
+captum
