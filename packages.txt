@@ -1,3 +1,2 @@
 tesseract-ocr
 libtesseract-dev
-libgl1-mesa-glx
