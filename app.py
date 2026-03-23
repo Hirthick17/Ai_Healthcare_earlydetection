@@ -220,35 +220,69 @@ with tab1:
 with tab2:
     with st.container():
         st.markdown("### Import Vitals Dataset")
-        st.info("Dataset must contain tabular columns: `patient_id`, `ecg_status`, `heart_rate`, `spo2`, `temperature`.")
-        
-        csv_file = st.file_uploader("Upload CSV or Excel feed", type=["csv", "xlsx"], label_visibility="collapsed")
-        
-        if csv_file:
-            try:
-                if csv_file.name.endswith(".csv"):
-                    df = pd.read_csv(csv_file)
-                else:
-                    df = pd.read_excel(csv_file)
-                    
-                # Preview uploaded data
-                st.dataframe(df.head(), use_container_width=True)
-                
-                run_batch = st.button("Run Weighted Triage Analysis", type="primary", use_container_width=True)
-                
-                if run_batch:
-                    with st.spinner("Processing triage queue..."):
-                        from src.triage_synthesizer import PriorityScoringEngine
-                        results_df = PriorityScoringEngine.calculate_risk(df)
-                        
-                        st.success(f"Analyzed {len(results_df)} patient records successfully.")
-                        
-                        # Style rows where Risk_Classification == 'Critical' in light red
-                        def highlight_critical(s):
-                            is_critical = str(s.get('Risk_Classification', '')) == 'Critical'
-                            return ['background-color: #fee2e2; color: #991b1b' if is_critical else '' for _ in s]
-                            
-                        st.dataframe(results_df.style.apply(highlight_critical, axis=1), use_container_width=True)
-                        
-            except Exception as e:
-                st.error(f"Error reading dataset: {e}")
+        st.info(
+            "**Expected CSV schema:** `patient_id`, `ecg_file_path` (path to .npy), "
+            "`heart_rate`, `spo2`, `temperature`\n\n"
+            "The `ecg_file_path` column should contain relative or absolute paths to 12-lead "
+            "`.npy` arrays (shape 1000×12) stored on the same server."
+        )
+
+        csv_file = st.file_uploader(
+            "Upload CSV feed", type=["csv", "xlsx"], label_visibility="collapsed"
+        )
+
+    if csv_file:
+        try:
+            df_raw = (
+                pd.read_csv(csv_file)
+                if csv_file.name.endswith(".csv")
+                else pd.read_excel(csv_file)
+            )
+        except Exception as e:
+            st.error(f"Error reading dataset: {e}")
+            df_raw = None
+
+        if df_raw is not None:
+            st.subheader("Data Preview")
+            st.dataframe(df_raw.head(), use_container_width=True)
+
+            run_batch = st.button(
+                "Run AI Triage Analysis", type="primary", use_container_width=True
+            )
+
+            if run_batch:
+                from src.triage_synthesizer import process_batch_dataset
+
+                st.markdown("**Running AI Triage on Batch...**")
+                progress_bar = st.progress(0)
+
+                def update_progress(fraction):
+                    progress_bar.progress(min(1.0, fraction))
+
+                with st.spinner("Fusing DenseNet ECG scores with NEWS2 vitals..."):
+                    results_df = process_batch_dataset(df_raw, progress_cb=update_progress)
+
+                progress_bar.progress(1.0)
+                st.success(f"✅ Triage complete for {len(results_df)} patients.")
+
+                # ── Batch Summary Metrics ──────────────────────────────────────
+                total_patients = len(results_df)
+                critical_count = int((results_df["Final_Triage_Class"] == "Critical").sum())
+                avg_risk = round(results_df["Total_Risk"].mean(), 3)
+
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Total Patients", total_patients)
+                m2.metric("🔴 Critical Alerts", critical_count)
+                m3.metric("Avg. Total Risk", avg_risk)
+
+                # ── Styled Triage Table ───────────────────────────────────────
+                def highlight_triage(row):
+                    if row.get("Final_Triage_Class") == "Critical":
+                        return ["background-color: #fee2e2; color: #991b1b"] * len(row)
+                    return ["background-color: #dcfce7; color: #166534"] * len(row)
+
+                st.dataframe(
+                    results_df.style.apply(highlight_triage, axis=1),
+                    use_container_width=True,
+                )
+
