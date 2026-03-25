@@ -1,0 +1,61 @@
+# Health Monitoring System Implementation Plan
+
+## Goal Description
+Implement an end-to-end Health Monitoring System that ingests raw patient vitals from multiple sources, processes them through an Intelligence Layer for feature engineering and ML-based risk prediction, and presents the decision along with explainability via a Streamlit Dashboard.
+
+## Proposed Changes
+
+### Configuration
+#### [NEW] [requirements.txt](file:///d:/OneDrive/Documents/Placement_Preparation/Projects/Healthmonitoring_system/requirements.txt)
+Define dependencies: `streamlit`, `pandas`, `numpy`, `opencv-python`, `scikit-learn`, `scipy`, `PyWavelets`, `plotly`, `reportlab`, `shap`, `imbalanced-learn`, `neurokit2`, `xgboost`, `lightgbm`.
+
+### Shared Utilities
+#### [NEW] [src/preprocessing.py](file:///d:/OneDrive/Documents/Placement_Preparation/Projects/Healthmonitoring_system/src/preprocessing.py)
+- `apply_kalman_filter`: SciPy/custom Kalman filter implementation.
+- `apply_wavelet_denoise`: Denoise signal using `PyWavelets`.
+- `apply_bandpass_filter`: 0.5-40Hz filtering via `scipy.signal`.
+- `scale_data`: Fit/transform `StandardScaler`.
+- `apply_smote`: `SMOTE` implementation from `imblearn` for training.
+
+#### [NEW] [src/feature_engineering.py](file:///d:/OneDrive/Documents/Placement_Preparation/Projects/Healthmonitoring_system/src/feature_engineering.py)
+- `extract_hr_features`: Pipeline using Wavelet (db6, level 5-6), Bandpass (0.8-3.5Hz, 4th order Butterworth), Normalization, and fused peak-finding (distance=fs*0.3) + FFT (0.8-3Hz max peak) with continuity checks.
+- `extract_spo2_features`: Bandpass (0.7-4Hz), calculate AC (signal-DC) and DC (low-pass < 0.5Hz or rolling mean) for Red/Green channels. Compute R = (AC/DC_red) / (AC/DC_green). Extract using LightGBM/XGBoost regressor or linear calibration.
+- `extract_ecg_features`: Use `neurokit2.signal.ecg_process()` for cleaning, peak detection, and HRV. Normalize RR intervals (Hampel filter) and include frequency-domain HRV (LF/HF ratio via Welch PSD).
+
+### Machine Learning
+#### [NEW] [src/model.py](file:///d:/OneDrive/Documents/Placement_Preparation/Projects/Healthmonitoring_system/src/model.py)
+- `TriBoostEnsemble(BaseEstimator)`: Ensemble classifier combining 3 boosting models (e.g., XGBoost, LightGBM, CatBoost or RF/GBM/AdaBoost depending on installed libraries, defaulting to `scikit-learn` variants if avoiding external C++ boosters).
+- `train_model()`: Pipeline compiling preprocessing -> model fitting.
+
+#### [NEW] [src/inference.py](file:///d:/OneDrive/Documents/Placement_Preparation/Projects/Healthmonitoring_system/src/inference.py)
+- `predict_risk()`: Loads trained `TriBoostEnsemble` and runs `predict_proba`.
+- `get_shap_values()`: Initializes `shap.TreeExplainer` on the model and returns SHAP values.
+
+### Data Ingestion Layer
+#### [NEW] [src/data_ingestion.py](file:///d:/OneDrive/Documents/Placement_Preparation/Projects/Healthmonitoring_system/src/data_ingestion.py)
+- `load_csv()`: Standard Pandas processing.
+- `parse_manual_input()`: Helper to validate UI sliders into DataFrames.
+- `process_video_ppg()`: OpenCV logic to estimate signal from webcam video feed.
+
+### Presentation Layer
+#### [NEW] [app.py](file:///d:/OneDrive/Documents/Placement_Preparation/Projects/Healthmonitoring_system/app.py)
+- Main Streamlit application.
+- Sidebar for Data Source Selection (Upload CSV, Manual input, WebCam).
+- Main area:
+  - Vitals/Signal plots (Plotly).
+  - Model Risk prediction probability gauge.
+  - SHAP Waterfall plot.
+  - Confusion Matrix / Bland-Altman (if validation dataset provided).
+  - Export PDF report (ReportLab).
+
+## Verification Plan
+
+### Automated Tests
+- N/A for this initial setup as no tests are currently defined. I will verify modules manually using sample outputs.
+
+### Manual Verification
+- Run `streamlit run app.py` locally and verify the UI renders correctly.
+- Test CSV file upload using [cardio_train.csv](file:///d:/OneDrive/Documents/Placement_Preparation/Projects/Healthmonitoring_system/dataset/cardio_train.csv/cardio_train.csv).
+- Test manual slider inputs and verify the risk score responds to changes.
+- Test the webcam logic (if browser testing allows, otherwise rely on the user to test the OpenCV popup window/Streamlit webcam component locally).
+- Ensure SHAP waterfall plots render correctly without errors.

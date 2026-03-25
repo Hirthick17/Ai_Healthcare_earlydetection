@@ -12,9 +12,11 @@ import torch
 import numpy as np
 import torch.nn.functional as F
 from pathlib import Path
+import tempfile
+import uuid
 
 from src.signal_extractor import extract_ecg_array
-from src.report_extractor import preprocess_image, run_ocr, extract_parameters, extract_diagnosis_text, classify_diagnosis
+from src.report_extractor import run_pipeline, classify_diagnosis
 from src.densenet1d import DenseNet1D
 
 PTBXL_CLASSES = ["NORM", "MI", "STTC", "CD", "HYP"]
@@ -38,10 +40,13 @@ def process_medical_document(uploaded_file, page_num=1, rotate_k=0):
     Main pipeline entry point.
     Returns: (final_triage_report (dict), npy_path (str))
     """
-    temp_dir = Path("temp")
-    temp_dir.mkdir(exist_ok=True)
-    
-    file_path = temp_dir / uploaded_file.name
+    # Use OS temp directory to avoid Streamlit Cloud working-dir permission issues.
+    temp_root = Path(tempfile.gettempdir()) / "healthmonitoring_system"
+    temp_dir = temp_root / uuid.uuid4().hex
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    safe_name = Path(uploaded_file.name).name
+    file_path = temp_dir / safe_name
     with open(file_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
         
@@ -99,18 +104,23 @@ def process_medical_document(uploaded_file, page_num=1, rotate_k=0):
     LEAD_NAMES = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
     lead_importance = {name: round(score, 6) for name, score in zip(LEAD_NAMES, saliency_scores)}
     
-    # ── 4. Doctor Report (OCR) ─────────────────────────────────────────
+    # ── 4. Doctor Report (pdfplumber pipeline — PDF inputs only) ───────
+    extraction_error = None
     try:
-        binary_roi = preprocess_image(img_path, debug=False)
-        raw_ocr = run_ocr(binary_roi)
-        parameters = extract_parameters(raw_ocr)
-        diag_text = extract_diagnosis_text(raw_ocr)
-        doc_class = classify_diagnosis(diag_text)
+        if file_path.suffix.lower() == ".pdf":
+            report = run_pipeline(str(file_path), save_output=False, rotate_k=rotate_k)
+            parameters = report.get("parameters", {})
+            diag_text  = report.get("raw_text", "")
+            doc_class  = report.get("predicted_class", classify_diagnosis(diag_text))
+        else:
+            # Image-only upload: skip PDF text extraction
+            raise ValueError("Input is an image, not a PDF — skipping pdfplumber pipeline.")
     except Exception as e:
-        print(f"Warning: OCR extraction failed: {e}")
-        doc_class = "NORM"
+        print(f"Warning: Report extraction failed: {e}")
+        extraction_error = str(e)
+        doc_class  = "NORM"
         parameters = {"ventricular_rate": None, "pr_interval": None, "qrs_duration": None}
-        diag_text = "No text extracted."
+        diag_text  = "No text extracted."
     
     # ── 5. Consensus Compilation ───────────────────────────────────────
     consensus_match = (ai_class == doc_class)
@@ -120,7 +130,8 @@ def process_medical_document(uploaded_file, page_num=1, rotate_k=0):
         "doctor_report": {
             "predicted_class": doc_class,
             "parameters": parameters,
-            "raw_text": diag_text
+            "raw_text": diag_text,
+            "extraction_error": extraction_error,
         },
         "ai_prediction": {
             "predicted_class": ai_class,

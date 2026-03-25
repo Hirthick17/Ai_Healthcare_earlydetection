@@ -78,6 +78,12 @@ if "triage_report" not in st.session_state:
     st.session_state.triage_report = None
 if "npy_path" not in st.session_state:
     st.session_state.npy_path = None
+if "single_upload_id" not in st.session_state:
+    st.session_state.single_upload_id = None
+if "batch_results" not in st.session_state:
+    st.session_state.batch_results = None
+if "batch_upload_id" not in st.session_state:
+    st.session_state.batch_upload_id = None
 
 st.title("Vitian Cardiac AI")
 
@@ -90,6 +96,7 @@ tab1, tab2 = st.tabs(["🩺 Single Patient (ECG)", "📊 Batch Dataset (Vitals)"
 with tab1:
     with st.container():
         st.subheader("1. Upload Medical Document")
+        st.caption("Designed for quick doctor use: upload, choose page/rotation, then run.")
         
         uploaded_file = st.file_uploader("Upload ECG Scan (PDF, JPG, PNG)", type=["pdf", "png", "jpg", "jpeg"], label_visibility="collapsed")
         
@@ -97,6 +104,14 @@ with tab1:
         rotation_k = 0
         
         if uploaded_file:
+            upload_id = f"{uploaded_file.name}:{getattr(uploaded_file, 'size', 0)}"
+            if st.session_state.single_upload_id != upload_id:
+                # New file selected: clear previous results so the UI is always consistent.
+                st.session_state.single_upload_id = upload_id
+                st.session_state.triage_report = None
+                st.session_state.npy_path = None
+                st.info("New document selected. Click `Run Diagnostic Analysis` to refresh results.")
+
             if uploaded_file.name.lower().endswith(".pdf"):
                 page_num = st.number_input("PDF Page Number", min_value=1, value=1, step=1)
                 
@@ -139,16 +154,41 @@ with tab1:
             
         with st.container():
             st.subheader("🩺 Clinical Report")
-            doc = report["doctor_report"]
-            
-            st.metric("Clinical Class Mapping", doc["predicted_class"])
+            doc    = report["doctor_report"]
             params = doc["parameters"]
+
+            st.metric("Clinical Class", doc["predicted_class"])
+
+            # ── Row 1: Main intervals ──────────────────────────────────────
             c1, c2, c3 = st.columns(3)
-            c1.metric("Heart Rate", f"{params.get('ventricular_rate') or '--'} bpm")
-            c2.metric("PR Interval", f"{params.get('pr_interval') or '--'} ms")
-            c3.metric("QRS Duration", f"{params.get('qrs_duration') or '--'} ms")
-            
-            st.info(f"**Raw finding:** {doc['raw_text']}")
+            c1.metric("❤️ Heart Rate",
+                      f"{params.get('ventricular_rate') or '—'} bpm")
+            c2.metric("⏱ PR Interval",
+                      f"{params.get('pr_interval') or '—'} ms")
+            c3.metric("📉 QRS Duration",
+                      f"{params.get('qrs_duration') or '—'} ms")
+
+            # ── Row 2: P Duration + QT/QTc ────────────────────────────────
+            c4, c5, c6 = st.columns(3)
+            c4.metric("P Duration",
+                      f"{params.get('p_duration') or '—'} ms")
+            c5.metric("QT Interval",
+                      f"{params.get('qt_interval') or '—'} ms")
+            c6.metric("QTc Interval",
+                      f"{params.get('qtc_interval') or '—'} ms")
+
+            # ── Row 3: P/QRS/T Axes ───────────────────────────────────────
+            p_ax  = params.get('p_axis')
+            q_ax  = params.get('qrs_axis')
+            t_ax  = params.get('t_axis')
+            if any(v is not None for v in [p_ax, q_ax, t_ax]):
+                c7, c8, c9 = st.columns(3)
+                c7.metric("P Axis",   f"{p_ax if p_ax is not None else '—'}°")
+                c8.metric("QRS Axis", f"{q_ax if q_ax is not None else '—'}°")
+                c9.metric("T Axis",   f"{t_ax if t_ax is not None else '—'}°")
+
+            # ── Interpretation text ───────────────────────────────────────
+            st.info(f"**Interpretation:** {doc['raw_text']}")
 
         with st.container():
             st.subheader("🤖 AI Analysis (DenseNet1D)")
@@ -170,49 +210,74 @@ with tab1:
                 st.markdown(f"<small><b>{cls}</b>: {prob*100:.1f}%</small>", unsafe_allow_html=True)
                 st.progress(prob)
 
+        # ── XAI: lead importance + interactive waveform viewer ─────────────────
         top_leads = []
-        if is_mismatch and "lead_importance" in ai:
+        lead_importance = ai.get("lead_importance") if isinstance(ai, dict) else None
+        if isinstance(lead_importance, dict) and lead_importance:
             with st.container():
                 st.subheader("🧠 Model Explainability (XAI)")
-                importances = ai["lead_importance"]
-                df_imp = pd.DataFrame(list(importances.items()), columns=["Lead", "Importance"])
-                top_leads = df_imp.sort_values(by="Importance", ascending=False).head(2)["Lead"].tolist()
-                
+                df_imp = pd.DataFrame(list(lead_importance.items()), columns=["Lead", "Importance"])
+                df_imp = df_imp.sort_values(by="Importance", ascending=False)
+                top_leads = df_imp.head(3)["Lead"].tolist()
+
                 if top_leads:
-                    st.info(f"The AI model's prediction of **{ai_class}** was primarily driven by anomalies detected in Lead **{top_leads[0]}**. Please manually review this specific channel on the extracted waveform below to verify the model's finding.")
-                    
-                st.bar_chart(df_imp.set_index("Lead"))
+                    if is_mismatch:
+                        st.error(
+                            f"Clinical discrepancy detected. Review the extracted waveform for the most influential lead: "
+                            f"**{df_imp.iloc[0]['Lead']}**."
+                        )
+                    st.caption(
+                        f"Top contributing leads for the current prediction: {', '.join(top_leads)}."
+                        if len(top_leads) > 1
+                        else f"Top contributing lead for the current prediction: {top_leads[0]}."
+                    )
+
+                    # Lightweight “animation”: pulse the bar chart to draw attention to the top lead.
+                    top_imp = float(df_imp.iloc[0]["Importance"])
+                    pulse = st.progress(0, text=f"Highlighting most important lead: {df_imp.iloc[0]['Lead']}")
+                    for i in range(0, 101, 5):
+                        pulse.progress(i)
+                        time.sleep(0.01)
+
+                st.bar_chart(df_imp.set_index("Lead")["Importance"])
 
         if npy_path and Path(npy_path).exists():
             data = np.load(npy_path)
             if data.shape == (1000, 12):
                 with st.container():
-                    st.subheader("📈 Live Waveform Data")
-                    
+                    st.subheader("📈 Extracted Waveform (12-Lead)")
+
                     LEAD_NAMES = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
-                    plot_leads = top_leads if len(top_leads) >= 2 else ["II"]
-                    
-                    fig = make_subplots(rows=len(plot_leads), cols=1, shared_xaxes=True, subplot_titles=[f"Lead {n}" for n in plot_leads])
-                    
-                    for idx, lead_name in enumerate(plot_leads):
-                        l_idx = LEAD_NAMES.index(lead_name)
-                        fig.add_trace(go.Scatter(
-                            y=data[:, l_idx], mode='lines', 
-                            line=dict(color='#4f46e5', width=3, shape='spline'),
-                            fill='tozeroy', fillcolor='rgba(79,70,229,0.1)',
-                            name=f"Lead {lead_name}"
-                        ), row=idx+1, col=1)
-                        
-                        fig.update_yaxes(showgrid=True, gridcolor='#e2e8f0', zeroline=False, row=idx+1, col=1)
-                        fig.update_xaxes(showgrid=False, zeroline=False, title_text=f"Lead {lead_name} (Resampled)" if idx == len(plot_leads)-1 else "", row=idx+1, col=1)
-                        
-                    fig.update_layout(
-                        height=200 * len(plot_leads) + 50,
-                        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                        showlegend=False, margin=dict(l=0, r=0, t=20, b=0),
-                        font=dict(color='#0f172a')
+                    lead_options = top_leads if top_leads else ["II"]
+                    lead_to_view = st.selectbox("Select lead to visualize", options=lead_options, index=0)
+
+                    l_idx = LEAD_NAMES.index(lead_to_view)
+                    fig = make_subplots(rows=1, cols=1, shared_xaxes=True, subplot_titles=[f"Lead {lead_to_view}"])
+
+                    fig.add_trace(
+                        go.Scatter(
+                            y=data[:, l_idx],
+                            mode="lines",
+                            line=dict(color="#4f46e5", width=3, shape="spline"),
+                            fill="tozeroy",
+                            fillcolor="rgba(79,70,229,0.1)",
+                            name=f"Lead {lead_to_view}",
+                        ),
+                        row=1,
+                        col=1,
                     )
-                    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+
+                    fig.update_yaxes(showgrid=True, gridcolor="#e2e8f0", zeroline=False, row=1, col=1)
+                    fig.update_xaxes(showgrid=False, zeroline=False, title_text="Resampled time steps", row=1, col=1)
+                    fig.update_layout(
+                        height=320,
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        showlegend=False,
+                        margin=dict(l=0, r=0, t=20, b=0),
+                        font=dict(color="#0f172a"),
+                    )
+                    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
 # ==============================================================================
 # TAB 2: Batch Dataset (Vitals)
@@ -220,6 +285,7 @@ with tab1:
 with tab2:
     with st.container():
         st.markdown("### Import Vitals Dataset")
+        st.caption("Upload a CSV/XLSX, run the batch, then select a patient to see XAI reasoning.")
         st.info(
             "**Expected CSV schema:** `patient_id`, `ecg_file_path` (path to .npy), "
             "`heart_rate`, `spo2`, `temperature`\n\n"
@@ -231,6 +297,11 @@ with tab2:
         )
 
     if csv_file:
+        upload_id = f"{csv_file.name}:{getattr(csv_file, 'size', 0)}"
+        if st.session_state.batch_upload_id != upload_id:
+            st.session_state.batch_upload_id = upload_id
+            st.session_state.batch_results = None
+
         try:
             df_raw = (
                 pd.read_csv(csv_file)
@@ -249,7 +320,11 @@ with tab2:
                 "Run AI Triage Analysis", type="primary", use_container_width=True
             )
 
-            if run_batch or "batch_results" in st.session_state:
+            clear_btn = st.button("Clear Results", use_container_width=True)
+            if clear_btn:
+                st.session_state.batch_results = None
+
+            if run_batch or st.session_state.batch_results is not None:
                 if run_batch:
                     from src.triage_synthesizer import process_batch_dataset
                     st.markdown("**Running AI Triage on Batch...**")
@@ -350,6 +425,12 @@ with tab2:
                 vitals_contribution = round(float(patient["NEWS2_Risk"]) * 0.35, 4)
 
                 # XAI Contribution Horizontal Bar
+                fused_risk = float(patient.get("Total_Risk", 0.0))
+                meter = st.progress(0, text="Fused risk meter (0% -> 100%)")
+                for i in range(0, int(min(100, fused_risk * 100)) + 1, 5):
+                    meter.progress(i)
+                    time.sleep(0.01)
+
                 xai_fig = px.bar(
                     x=[ecg_contribution, vitals_contribution],
                     y=["ECG AI (W=0.65)", "Vitals NEWS2 (W=0.35)"],
@@ -381,6 +462,12 @@ with tab2:
                     ],
                 )
                 st.plotly_chart(xai_fig, use_container_width=True, config={"displayModeBar": False})
+
+                with st.expander("How this XAI reasoning is computed (simple view)"):
+                    st.write(
+                        "Total risk = (0.65 × ECG AI risk) + (0.35 × NEWS2 vitals risk). "
+                        "A triage is marked Critical when the fused score is >= 0.50."
+                    )
 
                 # ── 5. Dynamic Clinical Reasoning Engine ─────────────────────
                 triage_class = patient["Final_Triage_Class"]

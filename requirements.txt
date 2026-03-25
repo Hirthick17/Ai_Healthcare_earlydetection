@@ -38,3 +38,5 @@ lightgbm
 
 # XAI
 captum
+
+google-generativeai>=0.8

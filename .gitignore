@@ -31,9 +31,11 @@ research_papers/
 
 # Environment
 .env
+.streamlit/secrets.toml
 venv/
 env/
 myenv/
+
 
 # Obsolete / Sandbox Code
 generate_test_ecg.py
