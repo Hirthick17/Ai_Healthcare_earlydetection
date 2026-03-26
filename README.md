@@ -73,25 +73,3 @@ To install and run this application locally on your machine, follow these steps:
    ```
 
    ```
-
-2. **Create a Virtual Environment** (Recommended):
-   ```bash
-   python -m venv myenv
-   # Activate on Windows:
-   myenv\Scripts\activate
-   # Activate on macOS/Linux:
-   source myenv/bin/activate
-   ```
-
-3. **Install Dependencies**:
-   Install all the required Python libraries using `pip`.
-   ```bash
-   pip install -r requirements.txt
-   ```
-   *(Note: For Streamlit Cloud deployments, system dependencies are configured in `packages.txt`.)*
-
-4. **Run the Application**:
-   Launch the user interface using Streamlit:
-   ```bash
-   streamlit run app.py
-   ```
