@@ -127,20 +127,6 @@ Working_video/Project_Demonstration_Healthsystem.mp4
 
 **Note:** For optimal GitHub repository performance, videos are best hosted externally (YouTube, Vimeo) and embedded as shown above. The local video file ensures you have a backup copy and can be downloaded directly if needed.
 
-### 🔄 How to Add Video to GitHub
-1. **Upload the video file** to your repository in the `Working_video/` folder
-2. **For better performance**, consider uploading to YouTube/Vimeo and using the embed code above
-3. **Large files**: Consider using Git LFS for video files over 100MB
-4. **Alternative**: Use GitHub releases for video distribution
-
-### 📋 Video Content Overview
-The demonstration covers:
-- **System Architecture**: Overview of the AI-powered health monitoring pipeline
-- **User Interface**: Interactive dashboard with file upload capabilities
-- **ECG Processing**: Real-time ECG signal analysis and visualization
-- **Risk Assessment**: Cardiac risk classification and clinical scoring
-- **Explainable AI**: Feature importance and model transparency
-- **Clinical Integration**: NEWS scoring and report generation
 
 ## Model Performance
 - **Architecture**: DenseNet1D optimized for 12-lead ECG physiological sequence data
